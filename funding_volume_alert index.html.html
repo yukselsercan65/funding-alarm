@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Funding + Hacim Alarm</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--line:#262d36;--tx:#e6edf3;--mut:#8b949e;--g:#3fb950;--r:#f85149;--y:#d29922;--b:#58a6ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  h1{font-size:17px;margin:0}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--mut)}
+  .dot.on{background:var(--g);box-shadow:0 0 8px var(--g)}
+  .wrap{padding:14px 18px;display:grid;gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  label{display:block;font-size:11px;color:var(--mut);margin-bottom:3px}
+  input,select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
+  button{background:var(--b);color:#04122b;border:0;border-radius:6px;padding:7px 12px;font-weight:600;cursor:pointer}
+  button.sec{background:var(--line);color:var(--tx)}
+  button.stop{background:var(--r);color:#fff}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:6px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--mut);font-weight:500;font-size:12px;position:sticky;top:0;background:var(--card)}
+  .g{color:var(--g)}.r{color:var(--r)}.y{color:var(--y)}.m{color:var(--mut)}
+  .badge{padding:2px 7px;border-radius:10px;font-size:11px;font-weight:700}
+  .b-al{background:var(--g);color:#04210c}
+  .b-f{background:#3d2f05;color:var(--y)}
+  .b-s{background:var(--r);color:#fff}
+  .scroll{max-height:420px;overflow:auto}
+  #log div{padding:6px 0;border-bottom:1px solid var(--line)}
+  .small{font-size:12px;color:var(--mut)}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Funding + Hacim Alarm — Binance USDT-M</h1>
+  <span class="small" id="status">Durduruldu</span>
+  <div class="row" style="margin-left:auto">
+    <button id="btnStart">Başlat</button>
+    <button class="sec" id="btnPerm">Bildirim izni</button>
+    <button class="sec" id="btnTest">Test bildirimi</button>
+    <button class="sec" id="btnClear">İşlemleri sıfırla</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="grid">
+      <div><label>Funding kaynağı</label>
+        <select id="mode"><option value="last">Binance funding (premiumIndex) — önerilen</option><option value="est">Kendi tahminim (gürültülü, önerilmez)</option></select></div>
+      <div><label>Yön</label>
+        <select id="dir"><option value="both">İkisi de (artan = LONG, azalan = SHORT)</option><option value="up">Sadece artan (LONG)</option><option value="down">Sadece azalan (SHORT)</option></select></div>
+      <div><label>Zaman penceresi (dk)</label><input id="winMin" type="number" min="1" step="1"></div>
+      <div><label>Min funding değişimi (puan %)</label><input id="minDelta" type="number" step="0.005"></div>
+      <div><label>Min yüzde değişim (% , 0 = kapalı)</label><input id="minPct" type="number" step="5" min="0"></div>
+      <div><label>Uç değer |funding| ≥ (%)</label><input id="startAbs" type="number" step="0.01"></div>
+      <div><label>Hacim çarpanı (5dk, x kat)</label><input id="volMult" type="number" step="0.1"></div>
+      <div><label>Min 24s hacim (milyon USDT)</label><input id="minVol" type="number" step="1"></div>
+      <div><label>Tarama aralığı (sn)</label><input id="pollSec" type="number" min="5" step="1"></div>
+      <div><label>Aynı coin bekleme (dk)</label><input id="cooldown" type="number" min="1" step="1"></div>
+      <div><label>İşlem büyüklüğü (USDT)</label><input id="posSize" type="number" min="1" step="100"></div>
+      <div><label>Kâr al (% , 0 = kapalı)</label><input id="tpPct" type="number" min="0" step="0.5"></div>
+      <div><label>Ses</label><select id="sound"><option value="1">Açık</option><option value="0">Kapalı</option></select></div>      <div><label>Telegram bot token (opsiyonel)</label><input id="tgToken" type="password" autocomplete="off"></div>
+      <div><label>Telegram chat id (opsiyonel)</label><input id="tgChat"></div>
+    </div>
+    <p class="small" style="margin:10px 0 0">
+      Alarm = <b>funding</b> pencere içinde en az “min değişim” kadar hareket etti <b>ve</b> son 5 dk hacmi önceki 12 mumun ortalamasının çarpan katı kadar. Funding yükseliyorsa <b>LONG</b>, düşüyorsa <b>SHORT</b> (pozitif/negatif fark etmez).
+      Funding geçmişi uygulama açıkken birikir; pencere dolana kadar değişim hesaplanmaz. Sekmeyi açık tut.
+    </p>
+  </div>
+
+  <div class="card">
+    <b>Alarm geçmişi</b>
+    <div id="log" class="small" style="margin-top:6px">Henüz alarm yok.</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><b>İşlem özeti (paper · kaldıraçsız · komisyonsuz)</b><button class="sec" onclick="closeAll()">Tümünü kapat</button></div>
+    <div class="grid" id="sum" style="margin-top:8px"></div>
+    <div id="closedList" class="small" style="margin-top:8px">Henüz kapanan işlem yok.</div>
+  </div>
+
+  <div class="card">
+    <b>Funding hareketi (en büyük değişim üstte)</b>
+    <div class="scroll" style="margin-top:6px">
+      <table>
+        <thead><tr><th>Coin</th><th>Fiyat</th><th>Funding %</th><th>Başlangıç %</th><th>Değişim</th><th>Değişim %</th><th>Hacim x</th><th>24s hacim</th><th>Durum</th><th>Alarm fiyatı</th><th>Açık işlem PnL</th><th>İşlem</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="7" class="m">Başlat'a bas.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://fapi.binance.com';
+const $ = id => document.getElementById(id);
+const DEF = {mode:'last',dir:'both',winMin:30,minDelta:0.03,minPct:20,startAbs:0.05,volMult:2,minVol:5,pollSec:15,cooldown:30,posSize:10000,tpPct:5,sound:'1',tgToken:'',tgChat:''};
+let cfg = Object.assign({}, DEF);
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('fva_cfg3') || '{}')); } catch(e){}
+const keys = Object.keys(DEF);
+keys.forEach(k => { $(k).value = cfg[k]; $(k).addEventListener('change', () => { readCfg(); if(k==='mode'){hist={};} }); });
+function readCfg(){
+  keys.forEach(k => { const v=$(k).value; cfg[k] = (typeof DEF[k]==='number') ? (isNaN(parseFloat(v)) ? DEF[k] : parseFloat(v)) : v; });
+  try { localStorage.setItem('fva_cfg3', JSON.stringify(cfg)); } catch(e){}
+}
+
+let marks = {}, alerts = {};
+let closed = [];
+try { alerts = JSON.parse(localStorage.getItem('fva_alerts') || '{}'); } catch(e){}
+try { closed = JSON.parse(localStorage.getItem('fva_closed') || '[]'); } catch(e){}
+let hist = {}, tick24 = {}, last24 = 0, volCache = {}, lastAlert = {}, timer = null, running = false;
+const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
+const fmt = (n,d=3) => (n>=0?'+':'') + n.toFixed(d);
+const fmtP = n => n>=100 ? n.toFixed(2) : n>=1 ? n.toFixed(4) : n>=0.01 ? n.toFixed(5) : n.toFixed(7);
+const fmtM = n => n>=1e9 ? (n/1e9).toFixed(2)+'B' : n>=1e6 ? (n/1e6).toFixed(1)+'M' : (n/1e3).toFixed(0)+'K';
+
+const fmtUsd = n => (n>=0?'+':'-') + '$' + Math.abs(n).toFixed(2);
+function saveTrades(){
+  try{ localStorage.setItem('fva_alerts', JSON.stringify(alerts)); localStorage.setItem('fva_closed', JSON.stringify(closed)); }catch(e){}
+}
+function pnlOf(a, price){
+  const size = a.size || 10000;
+  let p = (price - a.price) / a.price;
+  if((a.side||'long') === 'short') p = -p;
+  return {usd: size*p, pct: p*100, size};
+}
+function closeOne(s){
+  const a = alerts[s]; const px = marks[s];
+  if(!a || !px) return false;
+  const r = pnlOf(a, px);
+  closed.unshift({s, side:a.side||'long', entry:a.price, exit:px, usd:r.usd, pct:r.pct, size:r.size, t:a.t, tc:Date.now()});
+  delete alerts[s];
+  return true;
+}
+function closePos(s){ if(closeOne(s)){ saveTrades(); renderSummary(); poll(); } }
+function closeAll(){
+  if(!Object.keys(alerts).length) return;
+  if(!confirm('Tüm açık pozisyonlar kapatılsın mı?')) return;
+  Object.keys(alerts).forEach(closeOne); saveTrades(); renderSummary(); poll();
+}
+function renderSummary(){
+  let openUsd=0, openN=0, openSize=0;
+  for(const s in alerts){ if(marks[s]){ const rr = pnlOf(alerts[s], marks[s]); openUsd += rr.usd; openSize += rr.size; openN++; } }
+  const clUsd = closed.reduce((x,c) => x+c.usd, 0), clSize = closed.reduce((x,c) => x+c.size, 0);
+  const totUsd = openUsd + clUsd, totSize = openSize + clSize;
+  const totPct = totSize ? totUsd/totSize*100 : 0;
+  const wins = closed.filter(c => c.usd>0).length;
+  const box = (l,v,cls) => `<div><label>${l}</label><div class="${cls||''}" style="font-size:16px;font-weight:700">${v}</div></div>`;
+  $('sum').innerHTML =
+    box('Açık işlem', openN) +
+    box('Açık PnL', fmtUsd(openUsd)+' ('+fmt(openSize?openUsd/openSize*100:0,2)+'%)', openUsd>=0?'g':'r') +
+    box('Kapanan işlem', closed.length + (closed.length ? ' · kazanan '+wins : '')) +
+    box('Gerçekleşen PnL', fmtUsd(clUsd)+' ('+fmt(clSize?clUsd/clSize*100:0,2)+'%)', clUsd>=0?'g':'r') +
+    box('TOPLAM PnL', fmtUsd(totUsd), totUsd>=0?'g':'r') +
+    box('TOPLAM % (işlem büyüklüğüne göre)', fmt(totPct,2)+'%', totUsd>=0?'g':'r');
+  $('closedList').innerHTML = closed.length ? closed.slice(0,30).map(c =>
+    `<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span class="m">${new Date(c.tc).toLocaleTimeString('tr-TR')}</span> <b>${c.s}</b> <span class="badge ${c.side==='long'?'b-al':'b-s'}">${c.side.toUpperCase()}</span> ${fmtP(c.entry)} → ${fmtP(c.exit)} <b class="${c.usd>=0?'g':'r'}">${fmtUsd(c.usd)} (${fmt(c.pct,2)}%)</b>${c.auto?' <span class="m">(kâr al)</span>':''}</div>`
+  ).join('') : 'Henüz kapanan işlem yok.';
+}
+
+async function j(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status+' '+url); return r.json(); }
+
+function beep(){
+  if(cfg.sound!=='1') return;
+  try{
+    const c = new (window.AudioContext||window.webkitAudioContext)();
+    [880,1175].forEach((f,i)=>{ const o=c.createOscillator(), g=c.createGain(); o.frequency.value=f; o.connect(g); g.connect(c.destination);
+      g.gain.setValueAtTime(.2,c.currentTime+i*.18); g.gain.exponentialRampToValueAtTime(.001,c.currentTime+i*.18+.16);
+      o.start(c.currentTime+i*.18); o.stop(c.currentTime+i*.18+.17); });
+  }catch(e){}
+}
+async function notify(title, body){
+  beep();
+  if('Notification' in window && Notification.permission==='granted'){
+    try{ new Notification(title,{body}); }catch(e){}
+  }
+  if(cfg.tgToken && cfg.tgChat){
+    try{
+      await fetch(`https://api.telegram.org/bot${cfg.tgToken}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({chat_id:cfg.tgChat,text:title+'\n'+body})});
+    }catch(e){}
+  }
+}
+function addLog(html){
+  const el = $('log'); if(el.textContent.startsWith('Henüz')) el.innerHTML='';
+  const d = document.createElement('div'); d.innerHTML = `<span class="m">${new Date().toLocaleTimeString('tr-TR')}</span> ${html}`;
+  el.prepend(d); while(el.children.length>60) el.lastChild.remove();
+}
+
+async function getVolRatio(sym){
+  const c = volCache[sym];
+  if(c && Date.now()-c.t < 20000) return c.ratio;
+  const k = await j(`${BASE}/fapi/v1/klines?symbol=${sym}&interval=5m&limit=15`);
+  // k: [..., current forming candle last]; quote volume = index 7
+  const q = k.map(x => +x[7]);
+  const cur = q[q.length-1], lastClosed = q[q.length-2];
+  const prev = q.slice(0, q.length-2).slice(-12);
+  const avg = prev.reduce((a,b)=>a+b,0) / Math.max(prev.length,1);
+  const ratio = avg>0 ? Math.max(cur, lastClosed)/avg : 0;
+  volCache[sym] = {t:Date.now(), ratio};
+  return ratio;
+}
+
+async function poll(){
+  try{
+    readCfg();
+    const now = Date.now();
+    const data = await j(BASE+'/fapi/v1/premiumIndex');
+    if(now - last24 > 60000){
+      const t = await j(BASE+'/fapi/v1/ticker/24hr');
+      tick24 = {}; t.forEach(x => tick24[x.symbol] = {qv:+x.quoteVolume, chg:+x.priceChangePercent});
+      last24 = now;
+    }
+    const keep = now - Math.max(cfg.winMin,60)*60000*2;
+    for(const d of data){
+      const s = d.symbol; if(!s.endsWith('USDT')) continue;
+      const mark=+d.markPrice, idx=+d.indexPrice; if(!idx) continue; marks[s]=mark;
+      let f;
+      if(cfg.mode==='est'){
+        const I = +d.interestRate || 0.0001, P = (mark-idx)/idx;
+        f = (P + clamp(I-P, -0.0005, 0.0005)) * 100;
+      } else f = +d.lastFundingRate * 100;
+      const a = hist[s] || (hist[s]=[]);
+      a.push({t:now,f});
+      while(a.length && a[0].t < keep) a.shift();
+    }
+
+    // Otomatik kâr al
+    if(cfg.tpPct > 0){
+      let tpHit = false;
+      for(const s of Object.keys(alerts)){
+        if(!marks[s]) continue;
+        if(pnlOf(alerts[s], marks[s]).pct >= cfg.tpPct && closeOne(s)){
+          tpHit = true;
+          const c = closed[0]; c.auto = true;
+          const m2 = `${c.side.toUpperCase()} ${fmtP(c.entry)} → ${fmtP(c.exit)} · ${fmtUsd(c.usd)} (${fmt(c.pct,2)}%)`;
+          addLog(`<b class="g">${s}</b> kâr al: ${m2}`);
+          notify(`✅ ${s} kâr alındı`, m2);
+        }
+      }
+      if(tpHit) saveTrades();
+    }
+
+    const rows = [], cand = [];
+    const from = now - cfg.winMin*60000;
+    for(const s in hist){
+      const arr = hist[s].filter(p => p.t >= from);
+      if(arr.length < 2) continue;
+      const cur = arr[arr.length-1].f;
+      const ref = arr[0].f;                 // pencere başındaki funding
+      const diff = cur - ref;
+      const kind = diff >= 0 ? 'up' : 'down';
+      let delta = Math.abs(diff);
+      if((cfg.dir==='up' && kind!=='up') || (cfg.dir==='down' && kind!=='down')) delta = 0;
+      const qv = tick24[s]?.qv || 0;
+      const side = kind==='up' ? 'long' : 'short';
+      const pct = delta / Math.max(Math.abs(ref), 0.005) * 100;
+      const fundOK = delta >= cfg.minDelta && pct >= cfg.minPct &&Math.max(Math.abs(ref),Math.abs(cur)) >= cfg.startAbs && qv >= cfg.minVol*1e6;
+      const row = {s,cur,ref,delta,pct,kind,side,qv,fundOK,ratio:null,alarm:false};
+      rows.push(row);
+      if(fundOK) cand.push(row);
+    }
+
+    for(const r of cand.slice(0,40)){
+      try{
+        r.ratio = await getVolRatio(r.s);
+        if(r.ratio >= cfg.volMult){
+          r.alarm = true;
+          if(now - (lastAlert[r.s]||0) > cfg.cooldown*60000){
+            lastAlert[r.s] = now;
+            if(!alerts[r.s]){ alerts[r.s] = {price: marks[r.s], t: now, kind: r.kind, side: r.side, size: cfg.posSize}; saveTrades(); }
+            const arrow = r.kind==='up' ? '▲' : '▼';
+            const msg = `${r.side.toUpperCase()} ${cfg.posSize}$ · Fiyat ${fmtP(marks[r.s])}, Funding ${fmt(r.ref)}% → ${fmt(r.cur)}% (${arrow}${r.delta.toFixed(3)} · %${r.pct.toFixed(0)}), hacim ${r.ratio.toFixed(1)}x, ${cfg.winMin}dk`;
+            addLog(`<b class="${r.kind==='up'?'g':'r'}">${r.s}</b> ${msg}`);
+            notify(`🚨 ${r.s} funding+hacim`, msg);
+          }
+        }
+      }catch(e){}
+    }
+    rows.forEach(r => { if(r.ratio===null && volCache[r.s] && now-volCache[r.s].t<60000) r.ratio = volCache[r.s].ratio; });
+
+    for(const s in alerts){
+      if(!rows.find(x => x.s===s)){
+        const h = hist[s]; const c = h && h.length ? h[h.length-1].f : 0;
+        rows.push({s,cur:c,ref:c,delta:0,kind:'up',qv:tick24[s]?.qv||0,fundOK:false,ratio:volCache[s]?volCache[s].ratio:null,alarm:false});
+      }
+    }
+    rows.sort((a,b) => (!!alerts[b.s]-!!alerts[a.s]) || (b.alarm-a.alarm) || (b.delta-a.delta));
+    const html = rows.slice(0,80).map(r => {
+      const st = r.alarm ? `<span class="badge ${r.side==='short'?'b-s':'b-al'}">ALARM ${r.side?r.side.toUpperCase():''}</span>` : r.fundOK ? '<span class="badge b-f">Funding OK · hacim bekleniyor</span>' : '<span class="m">-</span>';
+      const dcls = r.kind==='up' ? 'g' : 'r';
+      const al = alerts[r.s];
+      let pnlH = '<td class="m">-</td><td class="m">-</td><td class="m">-</td>';
+      if(al && marks[r.s]){
+        const sd = al.side || 'long';
+        const rr = pnlOf(al, marks[r.s]); const p = rr.pct;
+        const mins = Math.round((Date.now()-al.t)/60000);
+        pnlH = `<td><span class="badge ${sd==='long'?'b-al':'b-s'}">${sd.toUpperCase()}</span> ${fmtP(al.price)}</td><td class="${p>=0?'g':'r'}"><b>${fmtUsd(rr.usd)}</b> · ${fmt(p,2)}% <span class="m">(${mins}dk)</span></td><td><button class="stop" onclick="closePos('${r.s}')">Kapat</button></td>`;
+      }
+      return `<tr><td><b>${r.s.replace('USDT','')}</b></td><td>${marks[r.s]?fmtP(marks[r.s]):'-'}</td><td>${fmt(r.cur)}</td><td class="m">${fmt(r.ref)}</td>
+        <td class="${dcls}">${r.kind==='up'?'▲':'▼'} ${r.delta.toFixed(3)}</td>
+        <td class="${dcls}">%${(r.pct||0).toFixed(0)}</td>
+        <td class="${r.ratio>=cfg.volMult?'g':'m'}">${r.ratio===null?'-':r.ratio.toFixed(1)+'x'}</td>
+        <td class="m">${fmtM(r.qv)}</td><td>${st}</td>${pnlH}</tr>`;
+    }).join('');
+    $('tbody').innerHTML = html || '<tr><td colspan="7" class="m">Funding geçmişi birikiyor… (pencere: '+cfg.winMin+' dk)</td></tr>';
+    renderSummary();
+    $('status').textContent = `Çalışıyor · ${Object.keys(hist).length} coin · ${new Date().toLocaleTimeString('tr-TR')}`;
+  }catch(e){
+    $('status').textContent = 'Hata: ' + e.message;
+  }
+}
+
+function start(){
+  readCfg(); running = true;
+  $('dot').classList.add('on'); $('btnStart').textContent='Durdur'; $('btnStart').classList.add('stop');
+  poll(); timer = setInterval(poll, cfg.pollSec*1000);
+}
+function stop(){
+  running = false; clearInterval(timer);
+  $('dot').classList.remove('on'); $('btnStart').textContent='Başlat'; $('btnStart').classList.remove('stop');
+  $('status').textContent = 'Durduruldu';
+}
+$('btnStart').onclick = () => running ? stop() : start();
+$('btnPerm').onclick = async () => {
+  if(!('Notification' in window)) return alert('Tarayıcı bildirimi desteklemiyor.');
+  const p = await Notification.requestPermission(); $('status').textContent = 'Bildirim izni: ' + p;
+};
+$('btnTest').onclick = () => { readCfg(); notify('✅ Test', 'Bildirimler çalışıyor.'); };
+$('btnClear').onclick = () => {
+  if(!confirm('Tüm açık ve kapanan işlemler silinsin mi?')) return;
+  alerts = {}; closed = []; lastAlert = {}; saveTrades(); renderSummary();
+};
+renderSummary();
+</script>
+</body>
+</html>
