@@ -30,6 +30,7 @@
   .b-al{background:var(--g);color:#04210c}
   .b-f{background:#3d2f05;color:var(--y)}
   .b-s{background:var(--r);color:#fff}
+  .b-x{background:#3b1d1d;color:var(--r)}
   .scroll{max-height:420px;overflow:auto}
   #log div{padding:6px 0;border-bottom:1px solid var(--line)}
   .small{font-size:12px;color:var(--mut)}
@@ -59,6 +60,8 @@
       <div><label>Min funding değişimi (puan %)</label><input id="minDelta" type="number" step="0.005"></div>
       <div><label>Min yüzde değişim (% , 0 = kapalı)</label><input id="minPct" type="number" step="5" min="0"></div>
       <div><label>Uç değer |funding| ≥ (%)</label><input id="startAbs" type="number" step="0.01"></div>
+      <div><label>Funding ÜST limit (% · funding ≥ bu değer ise işleme girme · 0 = kapalı)</label><input id="maxFund" type="number" step="0.05"></div>
+      <div><label>Funding ALT limit (% · funding ≤ bu değer ise işleme girme · 0 = kapalı)</label><input id="minFund" type="number" step="0.05"></div>
       <div><label>Hacim çarpanı (5dk, x kat)</label><input id="volMult" type="number" step="0.1"></div>
       <div><label>Min 24s hacim (milyon USDT)</label><input id="minVol" type="number" step="1"></div>
       <div><label>Tarama aralığı (sn)</label><input id="pollSec" type="number" min="5" step="1"></div>
@@ -70,7 +73,9 @@
     </div>
     <p class="small" style="margin:10px 0 0">
       Alarm = <b>funding</b> pencere içinde en az “min değişim” kadar hareket etti <b>ve</b> son 5 dk hacmi önceki 12 mumun ortalamasının çarpan katı kadar. Funding yükseliyorsa <b>LONG</b>, düşüyorsa <b>SHORT</b> (pozitif/negatif fark etmez).
+      Funding limitleri: güncel funding üst limite ulaşmışsa veya alt limite inmişse sinyal üretilmez, işleme girilmez (tabloda “Funding limiti” rozeti görünür).
       Funding geçmişi uygulama açıkken birikir; pencere dolana kadar değişim hesaplanmaz. Sekmeyi açık tut.
+      Açık işlemlerde <b>Funding</b> sütunu, giriş anından sonra gerçekleşen funding ödemelerinin Binance kayıtlarından hesaplanan toplamıdır (ödenen = kırmızı, alınan = yeşil); <b>Net PnL</b> = fiyat PnL + funding.
     </p>
   </div>
 
@@ -80,7 +85,7 @@
   </div>
 
   <div class="card">
-    <div class="row" style="justify-content:space-between"><b>İşlem özeti (paper · kaldıraçsız · komisyonsuz)</b><button class="sec" onclick="closeAll()">Tümünü kapat</button></div>
+    <div class="row" style="justify-content:space-between"><b>İşlem özeti (paper · kaldıraçsız · komisyonsuz · funding dahil)</b><button class="sec" onclick="closeAll()">Tümünü kapat</button></div>
     <div class="grid" id="sum" style="margin-top:8px"></div>
     <div id="closedList" class="small" style="margin-top:8px">Henüz kapanan işlem yok.</div>
   </div>
@@ -89,8 +94,8 @@
     <b>Funding hareketi (en büyük değişim üstte)</b>
     <div class="scroll" style="margin-top:6px">
       <table>
-        <thead><tr><th>Coin</th><th>Fiyat</th><th>Funding %</th><th>Başlangıç %</th><th>Değişim</th><th>Değişim %</th><th>Hacim x</th><th>24s hacim</th><th>Durum</th><th>Alarm fiyatı</th><th>Açık işlem PnL</th><th>İşlem</th></tr></thead>
-        <tbody id="tbody"><tr><td colspan="7" class="m">Başlat'a bas.</td></tr></tbody>
+        <thead><tr><th>Coin</th><th>Fiyat</th><th>Funding %</th><th>Başlangıç %</th><th>Değişim</th><th>Değişim %</th><th>Hacim x</th><th>24s hacim</th><th>Durum</th><th>Alarm fiyatı</th><th>Açık PnL (fiyat)</th><th>Funding</th><th>Net PnL</th><th>İşlem</th></tr></thead>
+        <tbody id="tbody"><tr><td colspan="14" class="m">Başlat'a bas.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -99,7 +104,7 @@
 <script>
 const BASE = 'https://fapi.binance.com';
 const $ = id => document.getElementById(id);
-const DEF = {mode:'last',dir:'both',winMin:30,minDelta:0.03,minPct:20,startAbs:0.05,volMult:2,minVol:5,pollSec:15,cooldown:30,posSize:10000,tpPct:5,sound:'1',tgToken:'',tgChat:''};
+const DEF = {mode:'last',dir:'both',winMin:30,minDelta:0.03,minPct:20,startAbs:0.05,maxFund:0.5,minFund:-0.5,volMult:2,minVol:5,pollSec:15,cooldown:30,posSize:10000,tpPct:5,sound:'1',tgToken:'',tgChat:''};
 let cfg = Object.assign({}, DEF);
 try { Object.assign(cfg, JSON.parse(localStorage.getItem('fva_cfg3') || '{}')); } catch(e){}
 const keys = Object.keys(DEF);
@@ -114,6 +119,7 @@ let closed = [];
 try { alerts = JSON.parse(localStorage.getItem('fva_alerts') || '{}'); } catch(e){}
 try { closed = JSON.parse(localStorage.getItem('fva_closed') || '[]'); } catch(e){}
 let hist = {}, tick24 = {}, last24 = 0, volCache = {}, lastAlert = {}, timer = null, running = false;
+let fundCache = {};
 const clamp = (x,a,b) => Math.max(a, Math.min(b, x));
 const fmt = (n,d=3) => (n>=0?'+':'') + n.toFixed(d);
 const fmtP = n => n>=100 ? n.toFixed(2) : n>=1 ? n.toFixed(4) : n>=0.01 ? n.toFixed(5) : n.toFixed(7);
@@ -129,38 +135,75 @@ function pnlOf(a, price){
   if((a.side||'long') === 'short') p = -p;
   return {usd: size*p, pct: p*100, size};
 }
+
+// Gerçek funding: girişten sonra gerçekleşen funding ödemeleri (Binance /fapi/v1/fundingRate kayıtları).
+// Long pozitif funding'de öder, negatifte alır; short tersi. Pozisyon değeri = miktar × o anki mark fiyat.
+async function refreshFunding(s, force){
+  const a = alerts[s]; if(!a) return;
+  const key = s + '_' + a.t;
+  const c = fundCache[key];
+  if(!force && c && Date.now() - c.t < 45000) return;
+  try{
+    const arr = await j(`${BASE}/fapi/v1/fundingRate?symbol=${s}&startTime=${a.t}&limit=1000`);
+    const sgn = (a.side||'long') === 'long' ? 1 : -1;
+    const size = a.size || 10000;
+    let usd = 0, n = 0;
+    for(const x of arr){
+      if(+x.fundingTime <= a.t) continue;
+      const mp = +x.markPrice || a.price;
+      const notional = size / a.price * mp;
+      usd -= sgn * notional * (+x.fundingRate);
+      n++;
+    }
+    fundCache[key] = {t: Date.now(), usd, n};
+  }catch(e){}
+}
+function fundOf(s){
+  const a = alerts[s]; if(!a) return {usd:0, n:0};
+  return fundCache[s + '_' + a.t] || {usd:0, n:0};
+}
+
 function closeOne(s){
   const a = alerts[s]; const px = marks[s];
   if(!a || !px) return false;
-  const r = pnlOf(a, px);
-  closed.unshift({s, side:a.side||'long', entry:a.price, exit:px, usd:r.usd, pct:r.pct, size:r.size, t:a.t, tc:Date.now()});
+  const r = pnlOf(a, px); const f = fundOf(s);
+  closed.unshift({s, side:a.side||'long', entry:a.price, exit:px, usd:r.usd, fund:f.usd, fundN:f.n, pct:r.pct, size:r.size, t:a.t, tc:Date.now()});
   delete alerts[s];
   return true;
 }
-function closePos(s){ if(closeOne(s)){ saveTrades(); renderSummary(); poll(); } }
-function closeAll(){
+async function closePos(s){
+  await refreshFunding(s, true);
+  if(closeOne(s)){ saveTrades(); renderSummary(); poll(); }
+}
+async function closeAll(){
   if(!Object.keys(alerts).length) return;
   if(!confirm('Tüm açık pozisyonlar kapatılsın mı?')) return;
+  await Promise.all(Object.keys(alerts).map(s => refreshFunding(s, true)));
   Object.keys(alerts).forEach(closeOne); saveTrades(); renderSummary(); poll();
 }
 function renderSummary(){
-  let openUsd=0, openN=0, openSize=0;
-  for(const s in alerts){ if(marks[s]){ const rr = pnlOf(alerts[s], marks[s]); openUsd += rr.usd; openSize += rr.size; openN++; } }
-  const clUsd = closed.reduce((x,c) => x+c.usd, 0), clSize = closed.reduce((x,c) => x+c.size, 0);
-  const totUsd = openUsd + clUsd, totSize = openSize + clSize;
-  const totPct = totSize ? totUsd/totSize*100 : 0;
-  const wins = closed.filter(c => c.usd>0).length;
+  let openUsd=0, openFund=0, openN=0, openSize=0;
+  for(const s in alerts){ if(marks[s]){ const rr = pnlOf(alerts[s], marks[s]); openUsd += rr.usd; openFund += fundOf(s).usd; openSize += rr.size; openN++; } }
+  const clUsd = closed.reduce((x,c) => x+c.usd, 0);
+  const clFund = closed.reduce((x,c) => x+(c.fund||0), 0);
+  const clSize = closed.reduce((x,c) => x+c.size, 0);
+  const totNet = openUsd + openFund + clUsd + clFund, totSize = openSize + clSize;
+  const totPct = totSize ? totNet/totSize*100 : 0;
+  const wins = closed.filter(c => c.usd + (c.fund||0) > 0).length;
   const box = (l,v,cls) => `<div><label>${l}</label><div class="${cls||''}" style="font-size:16px;font-weight:700">${v}</div></div>`;
   $('sum').innerHTML =
     box('Açık işlem', openN) +
-    box('Açık PnL', fmtUsd(openUsd)+' ('+fmt(openSize?openUsd/openSize*100:0,2)+'%)', openUsd>=0?'g':'r') +
-    box('Kapanan işlem', closed.length + (closed.length ? ' · kazanan '+wins : '')) +
-    box('Gerçekleşen PnL', fmtUsd(clUsd)+' ('+fmt(clSize?clUsd/clSize*100:0,2)+'%)', clUsd>=0?'g':'r') +
-    box('TOPLAM PnL', fmtUsd(totUsd), totUsd>=0?'g':'r') +
-    box('TOPLAM % (işlem büyüklüğüne göre)', fmt(totPct,2)+'%', totUsd>=0?'g':'r');
-  $('closedList').innerHTML = closed.length ? closed.slice(0,30).map(c =>
-    `<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span class="m">${new Date(c.tc).toLocaleTimeString('tr-TR')}</span> <b>${c.s}</b> <span class="badge ${c.side==='long'?'b-al':'b-s'}">${c.side.toUpperCase()}</span> ${fmtP(c.entry)} → ${fmtP(c.exit)} <b class="${c.usd>=0?'g':'r'}">${fmtUsd(c.usd)} (${fmt(c.pct,2)}%)</b>${c.auto?' <span class="m">(kâr al)</span>':''}</div>`
-  ).join('') : 'Henüz kapanan işlem yok.';
+    box('Açık PnL (fiyat)', fmtUsd(openUsd)+' ('+fmt(openSize?openUsd/openSize*100:0,2)+'%)', openUsd>=0?'g':'r') +
+    box('Açık funding', fmtUsd(openFund), openFund>=0?'g':'r') +
+    box('Kapanan işlem', closed.length + (closed.length ? ' · kazanan '+wins+' (net)' : '')) +
+    box('Gerçekleşen PnL (fiyat)', fmtUsd(clUsd)+' ('+fmt(clSize?clUsd/clSize*100:0,2)+'%)', clUsd>=0?'g':'r') +
+    box('Kapanan funding', fmtUsd(clFund), clFund>=0?'g':'r') +
+    box('TOPLAM NET PnL (fiyat + funding)', fmtUsd(totNet), totNet>=0?'g':'r') +
+    box('TOPLAM NET % (işlem büyüklüğüne göre)', fmt(totPct,2)+'%', totNet>=0?'g':'r');
+  $('closedList').innerHTML = closed.length ? closed.slice(0,30).map(c => {
+    const f = c.fund || 0, net = c.usd + f;
+    return `<div style="padding:4px 0;border-bottom:1px solid var(--line)"><span class="m">${new Date(c.tc).toLocaleTimeString('tr-TR')}</span> <b>${c.s}</b> <span class="badge ${c.side==='long'?'b-al':'b-s'}">${c.side.toUpperCase()}</span> ${fmtP(c.entry)} → ${fmtP(c.exit)} · fiyat <b class="${c.usd>=0?'g':'r'}">${fmtUsd(c.usd)} (${fmt(c.pct,2)}%)</b> · funding <b class="${f>=0?'g':'r'}">${fmtUsd(f)}</b> · net <b class="${net>=0?'g':'r'}">${fmtUsd(net)} (${fmt(net/c.size*100,2)}%)</b>${c.auto?' <span class="m">(kâr al)</span>':''}</div>`;
+  }).join('') : 'Henüz kapanan işlem yok.';
 }
 
 async function j(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status+' '+url); return r.json(); }
@@ -230,6 +273,10 @@ async function poll(){
       while(a.length && a[0].t < keep) a.shift();
     }
 
+    // Açık işlemler için gerçekleşen funding'i güncelle
+    const openSyms = Object.keys(alerts);
+    if(openSyms.length) await Promise.all(openSyms.map(s => refreshFunding(s)));
+
     // Otomatik kâr al
     if(cfg.tpPct > 0){
       let tpHit = false;
@@ -238,7 +285,8 @@ async function poll(){
         if(pnlOf(alerts[s], marks[s]).pct >= cfg.tpPct && closeOne(s)){
           tpHit = true;
           const c = closed[0]; c.auto = true;
-          const m2 = `${c.side.toUpperCase()} ${fmtP(c.entry)} → ${fmtP(c.exit)} · ${fmtUsd(c.usd)} (${fmt(c.pct,2)}%)`;
+          const net = c.usd + (c.fund||0);
+          const m2 = `${c.side.toUpperCase()} ${fmtP(c.entry)} → ${fmtP(c.exit)} · fiyat ${fmtUsd(c.usd)} (${fmt(c.pct,2)}%) · funding ${fmtUsd(c.fund||0)} · net ${fmtUsd(net)}`;
           addLog(`<b class="g">${s}</b> kâr al: ${m2}`);
           notify(`✅ ${s} kâr alındı`, m2);
         }
@@ -260,8 +308,11 @@ async function poll(){
       const qv = tick24[s]?.qv || 0;
       const side = kind==='up' ? 'long' : 'short';
       const pct = delta / Math.max(Math.abs(ref), 0.005) * 100;
-      const fundOK = delta >= cfg.minDelta && pct >= cfg.minPct &&Math.max(Math.abs(ref),Math.abs(cur)) >= cfg.startAbs && qv >= cfg.minVol*1e6;
-      const row = {s,cur,ref,delta,pct,kind,side,qv,fundOK,ratio:null,alarm:false};
+      const base = delta >= cfg.minDelta && pct >= cfg.minPct &&Math.max(Math.abs(ref),Math.abs(cur)) >= cfg.startAbs && qv >= cfg.minVol*1e6;
+      // Funding limitleri: güncel funding üst limite ulaştıysa / alt limite indiyse işleme girme (0 = kapalı)
+      const blocked = base && ((cfg.maxFund !== 0 && cur >= cfg.maxFund) || (cfg.minFund !== 0 && cur <= cfg.minFund));
+      const fundOK = base && !blocked;
+      const row = {s,cur,ref,delta,pct,kind,side,qv,fundOK,blocked,ratio:null,alarm:false};
       rows.push(row);
       if(fundOK) cand.push(row);
     }
@@ -292,15 +343,21 @@ async function poll(){
     }
     rows.sort((a,b) => (!!alerts[b.s]-!!alerts[a.s]) || (b.alarm-a.alarm) || (b.delta-a.delta));
     const html = rows.slice(0,80).map(r => {
-      const st = r.alarm ? `<span class="badge ${r.side==='short'?'b-s':'b-al'}">ALARM ${r.side?r.side.toUpperCase():''}</span>` : r.fundOK ? '<span class="badge b-f">Funding OK · hacim bekleniyor</span>' : '<span class="m">-</span>';
+      const st = r.alarm ? `<span class="badge ${r.side==='short'?'b-s':'b-al'}">ALARM ${r.side?r.side.toUpperCase():''}</span>` : r.fundOK ? '<span class="badge b-f">Funding OK · hacim bekleniyor</span>' : r.blocked ? '<span class="badge b-x">Funding limiti</span>' : '<span class="m">-</span>';
       const dcls = r.kind==='up' ? 'g' : 'r';
       const al = alerts[r.s];
-      let pnlH = '<td class="m">-</td><td class="m">-</td><td class="m">-</td>';
+      let pnlH = '<td class="m">-</td><td class="m">-</td><td class="m">-</td><td class="m">-</td><td class="m">-</td>';
       if(al && marks[r.s]){
         const sd = al.side || 'long';
         const rr = pnlOf(al, marks[r.s]); const p = rr.pct;
+        const fd = fundOf(r.s);
+        const net = rr.usd + fd.usd;
         const mins = Math.round((Date.now()-al.t)/60000);
-        pnlH = `<td><span class="badge ${sd==='long'?'b-al':'b-s'}">${sd.toUpperCase()}</span> ${fmtP(al.price)}</td><td class="${p>=0?'g':'r'}"><b>${fmtUsd(rr.usd)}</b> · ${fmt(p,2)}% <span class="m">(${mins}dk)</span></td><td><button class="stop" onclick="closePos('${r.s}')">Kapat</button></td>`;
+        pnlH = `<td><span class="badge ${sd==='long'?'b-al':'b-s'}">${sd.toUpperCase()}</span> ${fmtP(al.price)}</td>` +
+          `<td class="${p>=0?'g':'r'}"><b>${fmtUsd(rr.usd)}</b> · ${fmt(p,2)}% <span class="m">(${mins}dk)</span></td>` +
+          `<td class="${fd.usd>=0?'g':'r'}"><b>${fmtUsd(fd.usd)}</b> <span class="m">(${fd.n}x)</span></td>` +
+          `<td class="${net>=0?'g':'r'}"><b>${fmtUsd(net)}</b> · ${fmt(net/rr.size*100,2)}%</td>` +
+          `<td><button class="stop" onclick="closePos('${r.s}')">Kapat</button></td>`;
       }
       return `<tr><td><b>${r.s.replace('USDT','')}</b></td><td>${marks[r.s]?fmtP(marks[r.s]):'-'}</td><td>${fmt(r.cur)}</td><td class="m">${fmt(r.ref)}</td>
         <td class="${dcls}">${r.kind==='up'?'▲':'▼'} ${r.delta.toFixed(3)}</td>
@@ -308,7 +365,7 @@ async function poll(){
         <td class="${r.ratio>=cfg.volMult?'g':'m'}">${r.ratio===null?'-':r.ratio.toFixed(1)+'x'}</td>
         <td class="m">${fmtM(r.qv)}</td><td>${st}</td>${pnlH}</tr>`;
     }).join('');
-    $('tbody').innerHTML = html || '<tr><td colspan="7" class="m">Funding geçmişi birikiyor… (pencere: '+cfg.winMin+' dk)</td></tr>';
+    $('tbody').innerHTML = html || '<tr><td colspan="14" class="m">Funding geçmişi birikiyor… (pencere: '+cfg.winMin+' dk)</td></tr>';
     renderSummary();
     $('status').textContent = `Çalışıyor · ${Object.keys(hist).length} coin · ${new Date().toLocaleTimeString('tr-TR')}`;
   }catch(e){
@@ -334,7 +391,7 @@ $('btnPerm').onclick = async () => {
 $('btnTest').onclick = () => { readCfg(); notify('✅ Test', 'Bildirimler çalışıyor.'); };
 $('btnClear').onclick = () => {
   if(!confirm('Tüm açık ve kapanan işlemler silinsin mi?')) return;
-  alerts = {}; closed = []; lastAlert = {}; saveTrades(); renderSummary();
+  alerts = {}; closed = []; lastAlert = {}; fundCache = {}; saveTrades(); renderSummary();
 };
 renderSummary();
 </script>
